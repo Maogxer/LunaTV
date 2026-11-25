@@ -86,6 +86,10 @@ interface MutationContext {
  * });
  * ```
  */
+let lastCloudSaveTime = 0;
+let lastCloudSaveKey = '';
+const CLOUD_SAVE_INTERVAL = 60 * 1000;
+
 export function useSavePlayRecordMutation(): UseMutationResult<
   void,
   Error,
@@ -96,17 +100,26 @@ export function useSavePlayRecordMutation(): UseMutationResult<
 
   return useMutation({
     mutationFn: async ({ source, id, record }: SavePlayRecordParams) => {
+      const now = Date.now();
+      const currentKey = `${source}+${id}+${record.index}`;
+
+      if (
+        currentKey === lastCloudSaveKey &&
+        now - lastCloudSaveTime < CLOUD_SAVE_INTERVAL
+      ) {
+        return;
+      }
+
+      lastCloudSaveTime = now;
+      lastCloudSaveKey = currentKey;
       await savePlayRecord(source, id, record);
     },
 
     onMutate: async ({ source, id, record }) => {
-      // 1. 取消正在进行的查询，避免覆盖乐观更新
       await queryClient.cancelQueries({ queryKey: ['playRecords'] });
 
-      // 2. 保存当前数据快照
       const previousPlayRecords = queryClient.getQueryData<Record<string, PlayRecord>>(['playRecords']);
 
-      // 3. 乐观更新缓存
       queryClient.setQueryData<Record<string, PlayRecord>>(['playRecords'], (old = {}) => {
         const key = `${source}+${id}`;
         return {
@@ -120,19 +133,15 @@ export function useSavePlayRecordMutation(): UseMutationResult<
 
     onError: (error, variables, context) => {
       console.error('保存播放记录失败:', error);
+      lastCloudSaveTime = 0;
 
-      // 回滚到之前的状态
       if (context?.previousPlayRecords) {
         queryClient.setQueryData(['playRecords'], context.previousPlayRecords);
       }
     },
-
-    onSettled: () => {
-      // 刷新播放记录查询
-      queryClient.invalidateQueries({ queryKey: ['playRecords'] });
-    },
   });
 }
+
 
 // ============================================================================
 // Hook: 保存收藏
