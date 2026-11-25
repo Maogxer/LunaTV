@@ -90,16 +90,6 @@ export class DbManager {
 
   constructor() {
     this.storage = getStorage();
-    // 启动时自动触发数据迁移（异步，不阻塞构造）
-    if (this.storage && typeof (this.storage as any).migrateData === 'function') {
-      (this.storage as any).migrateData().then(async () => {
-        if (typeof (this.storage as any).migratePasswords === 'function') {
-          await (this.storage as any).migratePasswords();
-        }
-      }).catch((err: any) => {
-        console.error('数据迁移异常:', err);
-      });
-    }
   }
 
   // 播放记录相关方法
@@ -124,12 +114,19 @@ export class DbManager {
     await this.storage.setPlayRecord(userName, key, record);
   }
 
-  async getAllPlayRecords(userName: string): Promise<{
+    async getAllPlayRecords(userName: string): Promise<{
     [key: string]: PlayRecord;
   }> {
+    const cacheKey = `allPR:${userName}`;
+    const cached = getMemCache<any>(cacheKey);
+    if (cached !== undefined) return cached;
+
     incrementDbQuery();
-    return this.storage.getAllPlayRecords(userName);
+    const res = await this.storage.getAllPlayRecords(userName);
+    setMemCache(cacheKey, res, 3 * 60 * 1000);
+    return res;
   }
+
 
   async deletePlayRecord(
     userName: string,
@@ -176,7 +173,7 @@ export class DbManager {
     return this.storage.getFavorite(userName, key);
   }
 
-  async saveFavorite(
+    async saveFavorite(
     userName: string,
     source: string,
     id: string,
@@ -185,13 +182,20 @@ export class DbManager {
     incrementDbQuery();
     const key = generateStorageKey(source, id);
     await this.storage.setFavorite(userName, key, favorite);
+    memCache.delete(`allFav:${userName}`);
   }
 
   async getAllFavorites(
     userName: string
   ): Promise<{ [key: string]: Favorite }> {
+    const cacheKey = `allFav:${userName}`;
+    const cached = getMemCache<any>(cacheKey);
+    if (cached !== undefined) return cached;
+
     incrementDbQuery();
-    return this.storage.getAllFavorites(userName);
+    const res = await this.storage.getAllFavorites(userName);
+    setMemCache(cacheKey, res, 5 * 60 * 1000);
+    return res;
   }
 
   async deleteFavorite(
@@ -202,7 +206,9 @@ export class DbManager {
     incrementDbQuery();
     const key = generateStorageKey(source, id);
     await this.storage.deleteFavorite(userName, key);
+    memCache.delete(`allFav:${userName}`);
   }
+
 
   // ==================== 提醒相关方法 ====================
 
@@ -216,7 +222,7 @@ export class DbManager {
     return this.storage.getReminder(userName, key);
   }
 
-  async saveReminder(
+    async saveReminder(
     userName: string,
     source: string,
     id: string,
@@ -225,13 +231,20 @@ export class DbManager {
     incrementDbQuery();
     const key = generateStorageKey(source, id);
     await this.storage.setReminder(userName, key, reminder);
+    memCache.delete(`allRem:${userName}`);
   }
 
   async getAllReminders(
     userName: string
   ): Promise<{ [key: string]: Reminder }> {
+    const cacheKey = `allRem:${userName}`;
+    const cached = getMemCache<any>(cacheKey);
+    if (cached !== undefined) return cached;
+
     incrementDbQuery();
-    return this.storage.getAllReminders(userName);
+    const res = await this.storage.getAllReminders(userName);
+    setMemCache(cacheKey, res, 5 * 60 * 1000);
+    return res;
   }
 
   async deleteReminder(
@@ -242,7 +255,9 @@ export class DbManager {
     incrementDbQuery();
     const key = generateStorageKey(source, id);
     await this.storage.deleteReminder(userName, key);
+    memCache.delete(`allRem:${userName}`);
   }
+
 
   // 🚀 批量保存收藏（Upstash 优化，使用 mset 只算1条命令）
   async saveFavoritesBatch(
