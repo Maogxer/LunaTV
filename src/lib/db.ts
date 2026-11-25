@@ -53,6 +53,25 @@ function createStorage(): IStorage {
 // 单例存储实例
 let storageInstance: IStorage | null = null;
 
+// 🚀 内存缓存（10分钟有效，极大减少 Upstash Read 消耗）
+const memCache = new Map<string, { data: any; expireAt: number }>();
+const MEM_CACHE_TTL = 10 * 60 * 1000; // 10分钟
+
+function getMemCache<T>(key: string): T | undefined {
+  const item = memCache.get(key);
+  if (!item) return undefined;
+  if (Date.now() > item.expireAt) {
+    memCache.delete(key);
+    return undefined;
+  }
+  return item.data as T;
+}
+
+function setMemCache(key: string, data: any, ttl = MEM_CACHE_TTL): void {
+  memCache.set(key, { data, expireAt: Date.now() + ttl });
+}
+
+
 function getStorage(): IStorage {
   if (!storageInstance) {
     storageInstance = createStorage();
@@ -334,12 +353,19 @@ export class DbManager {
     createdAt?: number;
     oidcSub?: string;
   } | null> {
+    const cacheKey = `userInfoV2:${userName}`;
+    const cached = getMemCache<any>(cacheKey);
+    if (cached !== undefined) return cached;
+
     incrementDbQuery();
     if (typeof (this.storage as any).getUserInfoV2 === 'function') {
-      return (this.storage as any).getUserInfoV2(userName);
+      const res = await (this.storage as any).getUserInfoV2(userName);
+      setMemCache(cacheKey, res);
+      return res;
     }
     return null;
   }
+
 
   // ---------- 搜索历史 ----------
   async getSearchHistory(userName: string): Promise<string[]> {
@@ -368,9 +394,14 @@ export class DbManager {
 
   // ---------- 管理员配置 ----------
   async getAdminConfig(): Promise<AdminConfig | null> {
+    const cached = getMemCache<AdminConfig | null>('adminConfig');
+    if (cached !== undefined) return cached;
+
     incrementDbQuery();
     if (typeof (this.storage as any).getAdminConfig === 'function') {
-      return (this.storage as any).getAdminConfig();
+      const res = await (this.storage as any).getAdminConfig();
+      setMemCache('adminConfig', res);
+      return res;
     }
     return null;
   }
@@ -379,8 +410,11 @@ export class DbManager {
     incrementDbQuery();
     if (typeof (this.storage as any).setAdminConfig === 'function') {
       await (this.storage as any).setAdminConfig(config);
+      memCache.delete('adminConfig'); // 后台修改后立即失效，保证秒级生效
     }
   }
+
+
 
   // ---------- 跳过片头片尾配置 ----------
   async getSkipConfig(
